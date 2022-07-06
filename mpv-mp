@@ -1,0 +1,48 @@
+#!/bin/bash
+
+MPVMP_DIR=$HOME/.mpv-mp
+MPVMP_IPC=$MPVMP_DIR/ipc
+MPVMP_PID=$MPVMP_DIR/pid
+
+mkdir -p $MPVMP_DIR
+
+case $1 in
+	play)
+		if [[ ! -f $MPVMP_PID || $(ps -p $(sed 1q $MPVMP_PID) -o comm=) != "mpv" ]]; then
+			mpv --no-video --no-terminal --input-ipc-server=$MPVMP_IPC "$2" &
+			echo $! > $MPVMP_PID
+		else
+			echo "loadfile '$2' append" | socat - $MPVMP_IPC
+			echo "playlist-next" | socat - $MPVMP_IPC
+		fi
+		;;
+
+	pause)
+		echo "cycle pause" | socat - $MPVMP_IPC
+		;;
+
+	add)
+		echo "loadfile '$2' append" | socat - $MPVMP_IPC
+		;;
+
+	next)
+		echo "playlist-next" | socat - $MPVMP_IPC
+		;;
+
+	prev)
+		echo "playlist-prev" | socat - $MPVMP_IPC
+		;;
+
+	loop)
+		echo "cycle-values loop-playlist \"inf\" \"no\"" | socat - $MPVMP_IPC
+		;;
+
+	kill)
+		PID=$(sed 1q $MPVMP_PID)
+		kill -9 $PID
+		;;
+
+	*)
+		echo "usage: $0 command [args...]"
+		;;
+esac
