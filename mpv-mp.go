@@ -175,7 +175,7 @@ func playlistCmd(ipc net.Conn, args ...string) {
 	} else {
 		pos, err := strconv.Atoi(args[0])
 		check(err)
-		if pos < 0 || pos > len(playlistData) {
+		if pos < 0 || pos >= len(playlistData) {
 			die("%v: incorrect playlist position %d\n", os.Args[0], pos)
 		}
 		ipcSendCmd(ipc, fmt.Sprintf("playlist-play-index %d", pos))
