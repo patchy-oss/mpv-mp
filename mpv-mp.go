@@ -33,7 +33,7 @@ func main() {
 	if !mpvIsRunning(pidPath) {
 		mpvStart(pidPath, ipcPath)
 	}
-	ipc := mpvGetIPC(ipcPath)
+	ipc := mpvConnectIPC(ipcPath)
 	defer ipc.Close()
 
 	command := os.Args[1]
@@ -41,7 +41,7 @@ func main() {
 	case "play":
 		playCmd(ipc, os.Args[2:]...)
 	case "add":
-		addCmd(ipc, "append", os.Args[2:]...)
+		addCmd(ipc, appendACM, os.Args[2:]...)
 	case "playlist":
 		playlistCmd(ipc, os.Args[2:]...)
 	case "pause":
@@ -63,6 +63,7 @@ func main() {
 	os.Exit(0)
 }
 
+// mpvIsRunning checks if a background mpv instance already running
 func mpvIsRunning(pidPath string) bool {
 	data, err := os.ReadFile(pidPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -87,8 +88,16 @@ func mpvIsRunning(pidPath string) bool {
 	return running
 }
 
+// mpsStart starts new background mpv instance and writes its pid and ipc file in programDirPath
 func mpvStart(pidPath, ipcPath string) {
-	cmd := exec.Command("mpv", "--no-video", "--no-terminal", "--idle", "--loop-playlist", fmt.Sprintf("--input-ipc-server=%s", ipcPath))
+	cmd := exec.Command(
+		"mpv",
+		"--no-video",
+		"--no-terminal",
+		"--idle",
+		"--loop-playlist",
+		fmt.Sprintf("--input-ipc-server=%s", ipcPath),
+	)
 	err := cmd.Start()
 	check(err)
 
@@ -97,7 +106,8 @@ func mpvStart(pidPath, ipcPath string) {
 	check(err)
 }
 
-func mpvGetIPC(ipcPath string) net.Conn {
+// mpvConnectIPC creates unix socket to mpv IPC
+func mpvConnectIPC(ipcPath string) net.Conn {
 	const maxCheckTimes = 10
 	i := 0
 	_, err := os.Stat(ipcPath)
@@ -117,25 +127,34 @@ func mpvGetIPC(ipcPath string) net.Conn {
 	return ipc
 }
 
+// playCmd plays the current playlist from the beginning or replaces it with args
 func playCmd(ipc net.Conn, args ...string) {
 	if len(args) == 0 {
 		playlistCmd(ipc, "0")
 	} else {
-		addCmd(ipc, "replace", args...)
+		addCmd(ipc, replaceACM, args...)
 	}
 
 	paused := mpvGetProperty(ipc, "pause").(bool)
-	if paused == true {
+	if paused {
 		pauseCmd(ipc)
 	}
 }
 
-func addCmd(ipc net.Conn, mode string, args ...string) {
+type addCmdMode string
+
+const (
+	appendACM  addCmdMode = "append"
+	replaceACM addCmdMode = "replace"
+)
+
+// addCmd adds tracks from args; if there's DIR in args, adds it as playlist
+func addCmd(ipc net.Conn, mode addCmdMode, args ...string) {
 	if len(args) == 0 {
 		usage()
 	}
 	for _, fpath := range args {
-		// for now we just look at extension
+		// TODO: replace with walk and looking on actual extension
 		ext := filepath.Ext(fpath)
 		if ext == "" {
 			ipcSendCmd(ipc, fmt.Sprintf("loadlist %q %s", fpath, mode))
@@ -150,6 +169,7 @@ type playlistEntry struct {
 	Filename string `json:"filename"`
 }
 
+// playlistCmd shows current playlist; if "raw" is specified, show it in raw format; if INDEX is specified, change position to INDEX
 func playlistCmd(ipc net.Conn, args ...string) {
 	rawPlaylistData, err := json.Marshal(mpvGetProperty(ipc, "playlist"))
 	check(err)
@@ -182,22 +202,27 @@ func playlistCmd(ipc net.Conn, args ...string) {
 	}
 }
 
+// pauseCmd toggles pause for current position on the playlist
 func pauseCmd(ipc net.Conn) {
 	ipcSendCmd(ipc, "cycle pause")
 }
 
+// nextCmd change current position on the playlist to the next track
 func nextCmd(ipc net.Conn) {
 	ipcSendCmd(ipc, "playlist-next")
 }
 
+// nextCmd change current position on the playlist to the previous track
 func prevCmd(ipc net.Conn) {
 	ipcSendCmd(ipc, "playlist-prev")
 }
 
+// loopCmd toggles loop for current playlist track
 func loopCmd(ipc net.Conn) {
 	ipcSendCmd(ipc, "cycle-values loop-file 'inf' 'no'")
 }
 
+// killCmd kills current mpv session and deletes programDirPath
 func killCmd(pidPath string) {
 	data, err := os.ReadFile(pidPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -213,6 +238,7 @@ func killCmd(pidPath string) {
 	check(err)
 }
 
+// customCmd executes arbitary command specified in args
 func customCmd(ipc net.Conn, args ...string) {
 	if len(args) == 0 {
 		usage()
